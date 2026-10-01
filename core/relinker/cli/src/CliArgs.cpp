@@ -11,7 +11,9 @@ Args ParseArgs(int argc, char* argv[]) {
 
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
-        if (arg == "--skip-syscall-check") {
+        if (arg == "--help" || arg == "-h") {
+            args.showHelp = true;
+        } else if (arg == "--skip-syscall-check") {
             args.skipSyscallCheck = true;
         } else if (arg == "--skip-sce-module") {
             args.skipSceModule = true;
@@ -54,6 +56,9 @@ Args ParseArgs(int argc, char* argv[]) {
         }
     }
 
+    if (args.showHelp)
+        return args;
+
     if (args.skipSceModule && !args.excludedSceModules.empty())
         throw std::runtime_error("--exclude-sce-module conflicts with --skip-sce-module");
 
@@ -70,6 +75,27 @@ Args ParseArgs(int argc, char* argv[]) {
         );
 
     return args;
+}
+
+void PrintUsage(std::ostream& output) {
+    output << "Usage: relinker [options] <input.elf> <output.elf>\n"
+           << "\n"
+           << "Options:\n"
+           << "  -h, --help                              Show this help message\n"
+           << "      --windows                           Produce a Windows PE executable\n"
+           << "      --windows-diagnostics               Enable Windows dependency diagnostics\n"
+           << "      --windows-gui                       Use the Windows GUI subsystem\n"
+           << "      --skip-syscall-check                Skip forbidden syscall validation\n"
+           << "      --skip-sce-module                   Skip sce_module/sce_modules processing\n"
+           << "      --exclude-sce-module <file>         Exclude a sce_module file (repeatable)\n"
+           << "      --to-intel                          Lower supported AMD-only instructions\n"
+           << "      unused-filter=0|1|2                 Select unused NID filtering level\n"
+           << "      --registry                          Write the call registry JSON\n"
+           << "      --rpath <path>                      Set the runtime library search path\n"
+           << "      --lazy-binding                      Enable lazy symbol binding\n"
+           << "      --autorun                           Run the generated executable\n"
+           << "\n"
+           << "Example: relinker --to-intel input.elf output.elf\n";
 }
 
 }
