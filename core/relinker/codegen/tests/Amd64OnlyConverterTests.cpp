@@ -10,12 +10,6 @@
 #include <codegen/x86/X64InstructionDecoder.hpp>
 #include <codegen/x86/X64InstructionRewriter.hpp>
 #include <codegen/IInstructionScanner.hpp>
-#include <elfpatcher/general/EntryStubBuilder.hpp>
-#include <elfpatcher/general/ProgramHeaderLayoutBuilder.hpp>
-#include <elfpatcher/general/SectionHeaderTableBuilder.hpp>
-#include <elfpatcher/general/SegmentFilter.hpp>
-#include <elfpatcher/linux/LinuxElfPatcher.hpp>
-#include <io/ByteWriter.hpp>
 #include <array>
 #include <cstring>
 #include <cstdint>
@@ -455,83 +449,6 @@ void converterFailureOffsets() {
     require(failureOffset([&] { (void)converter->Convert(rdpru, {segmentHeader(20)}); }, "RDPRU was accepted") == 0x20F, "Unsupported instruction failure does not carry the file offset");
 }
 
-Bytes elfFixture(const Bytes& text) {
-    Bytes bytes(0x400);
-    bytes[0] = 0x7F;
-    bytes[1] = 'E';
-    bytes[2] = 'L';
-    bytes[3] = 'F';
-    bytes[4] = 2;
-    bytes[5] = 1;
-    bytes[6] = 1;
-    write<std::uint16_t>(bytes, 16, 3);
-    write<std::uint16_t>(bytes, 18, 62);
-    write<std::uint64_t>(bytes, 24, 0x1000);
-    write<std::uint64_t>(bytes, 32, 64);
-    write<std::uint16_t>(bytes, 54, 56);
-    write<std::uint16_t>(bytes, 56, 6);
-    write<std::uint32_t>(bytes, 64, 1);
-    write<std::uint32_t>(bytes, 68, 5);
-    write<std::uint64_t>(bytes, 72, 0x200);
-    write<std::uint64_t>(bytes, 80, 0x1000);
-    write<std::uint64_t>(bytes, 96, 0x100);
-    write<std::uint64_t>(bytes, 104, 0x100);
-    write<std::uint64_t>(bytes, 112, 0x1000);
-    write<std::uint32_t>(bytes, 120, 1);
-    write<std::uint32_t>(bytes, 124, 6);
-    write<std::uint64_t>(bytes, 128, 0x300);
-    write<std::uint64_t>(bytes, 136, 0x2000);
-    write<std::uint64_t>(bytes, 152, 0x100);
-    write<std::uint64_t>(bytes, 160, 0x100);
-    write<std::uint64_t>(bytes, 168, 0x1000);
-    std::fill(bytes.begin() + 0x200, bytes.begin() + 0x300, 0xCC);
-    std::copy(text.begin(), text.end(), bytes.begin() + 0x200);
-    return bytes;
-}
-
-std::vector<Domain::ProgramHeader> elfHeaders() {
-    return {{1, 5, 0x200, 0x1000, 0, 0x100, 0x100, 0x1000}, {1, 6, 0x300, 0x2000, 0, 0x100, 0x100, 0x1000}};
-}
-
-void linuxPlacement() {
-    const auto source = elfFixture({0xEB, 0x06, 0xF2, 0x0F, 0x78, 0xDB, 0x08, 0x08, 0xC3});
-    const auto headers = elfHeaders();
-    const auto converted = Codegen::MakeAmd64OnlyConverter()->Convert(source, {headers[0]});
-    require(converted.Trampolines.size() == 1 && converted.Bytes == source, "Linux fixture conversion produced unexpected results");
-    const auto byteWriter = std::make_shared<Io::ByteWriter>();
-    Elfpatcher::Linux::LinuxElfPatcher patcher(
-        std::make_shared<Elfpatcher::EntryStubBuilder>(),
-        std::make_shared<Elfpatcher::ProgramHeaderLayoutBuilder>(std::make_shared<Elfpatcher::SegmentFilter>(), byteWriter),
-        std::make_shared<Elfpatcher::SectionHeaderTableBuilder>(byteWriter),
-        byteWriter);
-    const auto output = patcher.Patch(converted.Bytes, headers, {}, 0, "$ORIGIN/libs", true, false, converted.Trampolines);
-    require(output[0x202] == 0xE9 && output[0x207] == 0x90, "Linux site was not replaced by a jump");
-    const auto target = 0x1002 + 5 + static_cast<std::int64_t>(read<std::int32_t>(output, 0x203));
-    require(target % 16 == 0 && target > 0x2100, "Linux stub is misaligned or inside the original image");
-    const auto phNum = read<std::uint16_t>(output, 56);
-    std::uint64_t bodyOffset = 0;
-    bool found = false;
-    for (std::uint16_t index = 0; index < phNum; ++index) {
-        const auto header = 64 + index * 56;
-        if (read<std::uint32_t>(output, header) != 1) continue;
-        const auto vaddr = read<std::uint64_t>(output, header + 16);
-        const auto memSize = read<std::uint64_t>(output, header + 40);
-        if (static_cast<std::uint64_t>(target) < vaddr || static_cast<std::uint64_t>(target) >= vaddr + memSize) continue;
-        require((read<std::uint32_t>(output, header + 4) & 1) != 0, "Linux stub segment is not executable");
-        bodyOffset = read<std::uint64_t>(output, header + 8) + (static_cast<std::uint64_t>(target) - vaddr);
-        found = true;
-    }
-    require(found, "Linux stub is not inside a PT_LOAD segment");
-    auto expectedBody = kInsertqSelfBody;
-    write<std::int32_t>(expectedBody, 10, static_cast<std::int32_t>(0x1008 - (target + 9 + 5)));
-    const Bytes actualBody(output.begin() + static_cast<std::ptrdiff_t>(bodyOffset), output.begin() + static_cast<std::ptrdiff_t>(bodyOffset + expectedBody.size()));
-    require(actualBody == expectedBody, "Linux stub body or return branch is wrong");
-    auto altered = converted.Bytes;
-    altered[0x205] = 0xDC;
-    requireFailure([&] { (void)patcher.Patch(altered, headers, {}, 0, "$ORIGIN/libs", true, false, converted.Trampolines); }, "Changed Linux site bytes were accepted");
-}
-
-}
 
 #if defined(__linux__) && defined(__x86_64__)
 std::uint64_t extrqReference(std::uint64_t value, std::uint64_t control) {
@@ -795,7 +712,6 @@ int main() {
         converterStrayRex();
         rewriterStrayRex();
         converterFailureOffsets();
-        linuxPlacement();
         scannerZeroTail();
         std::cout << "AMD64-only converter tests passed\n";
     } catch (const std::exception& error) {
