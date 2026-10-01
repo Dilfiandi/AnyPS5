@@ -694,6 +694,8 @@ void scannerZeroTail() {
     requireFailure([&] { (void)scanner->ScanCodeSection(truncated, 0, truncated.size()); }, "Truncated non-zero tail must still fail");
 }
 
+} // namespace
+
 int main() {
     try {
         decoderLengths();
