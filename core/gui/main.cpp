@@ -2,7 +2,10 @@
 #include <commdlg.h>
 #include <shellapi.h>
 
+#include <cwchar>
 #include <filesystem>
+#include <iterator>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -43,9 +46,10 @@ HWND gCopyRuntime = nullptr;
 
 std::wstring GetText(HWND control) {
     const int length = GetWindowTextLengthW(control);
-    std::wstring value(static_cast<std::size_t>(length), L'\0');
+    std::wstring value(static_cast<std::size_t>(length) + 1, L'\0');
     if (length > 0)
         GetWindowTextW(control, value.data(), length + 1);
+    value.resize(static_cast<std::size_t>(length));
     return value;
 }
 
@@ -144,8 +148,10 @@ void BrowseInput() {
 void BrowseOutput() {
     wchar_t buffer[32768] = {};
     const auto current = GetText(gOutput);
-    if (!current.empty())
-        wcsncpy_s(buffer, current.c_str(), _TRUNCATE);
+    if (!current.empty()) {
+        std::wcsncpy(buffer, current.c_str(), std::size(buffer) - 1);
+        buffer[std::size(buffer) - 1] = L'\0';
+    }
 
     OPENFILENAMEW dialog{};
     dialog.lStructSize = sizeof(dialog);
@@ -379,6 +385,7 @@ HWND AddControl(
 LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
     switch (message) {
     case WM_CREATE: {
+        gWindow = window;
         AddControl(L"STATIC", L"Input PS5 executable", 0, 20, 18, 180, 20, 0);
         gInput = AddControl(L"EDIT", L"", WS_BORDER | ES_AUTOHSCROLL, 20, 40, 650, 25, IdInput);
         AddControl(L"BUTTON", L"Browse...", BS_PUSHBUTTON, 680, 39, 100, 27, IdBrowseInput);
