@@ -7,6 +7,7 @@ namespace Cli {
 
 Args ParseArgs(int argc, char* argv[]) {
     Args args;
+    args.toWindows = true;
     bool unusedFilterSpecified = false;
 
     for (int i = 1; i < argc; ++i) {
@@ -62,15 +63,9 @@ Args ParseArgs(int argc, char* argv[]) {
     if (args.skipSceModule && !args.excludedSceModules.empty())
         throw std::runtime_error("--exclude-sce-module conflicts with --skip-sce-module");
 
-    if (args.windowsDiagnostics && !args.toWindows)
-        throw std::runtime_error("--windows-diagnostics requires --windows");
-
-    if (args.windowsGui && !args.toWindows)
-        throw std::runtime_error("--windows-gui requires --windows");
-
     if (args.inputPath.empty() || args.outputPath.empty())
         throw std::runtime_error(
-            "Usage: relinker [--windows] [--windows-diagnostics] [--windows-gui] [--skip-syscall-check] [--skip-sce-module] [--exclude-sce-module <file>]... [--to-intel] [unused-filter=0|1|2] [--registry] [--rpath <path>] [--lazy-binding] [--autorun] <input.elf> <output.elf>\n"
+            "Usage: relinker [--windows-diagnostics] [--windows-gui] [--skip-syscall-check] [--skip-sce-module] [--exclude-sce-module <file>]... [--to-intel] [unused-filter=0|1|2] [--registry] [--rpath <path>] [--lazy-binding] [--autorun] <input.elf> <output.elf>\n"
             "Example: relinker input.elf output.elf"
         );
 
@@ -82,7 +77,7 @@ void PrintUsage(std::ostream& output) {
            << "\n"
            << "Options:\n"
            << "  -h, --help                              Show this help message\n"
-           << "      --windows                           Produce a Windows PE executable\n"
+           << "      --windows                           Compatibility alias; Windows output is always used\n"
            << "      --windows-diagnostics               Enable Windows dependency diagnostics\n"
            << "      --windows-gui                       Use the Windows GUI subsystem\n"
            << "      --skip-syscall-check                Skip forbidden syscall validation\n"
