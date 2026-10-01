@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - release/VERSION
+      - release/TRIGGER
   workflow_dispatch:
 
 permissions:
@@ -27,6 +28,8 @@ jobs:
     name: Build and test portable Windows release
     runs-on: windows-latest
     timeout-minutes: 45
+    env:
+      SSL_CERT_FILE: C:\Program Files\Git\mingw64\etc\ssl\certs\ca-bundle.crt
     outputs:
       release_tag: ${{ steps.version.outputs.tag }}
     defaults:
