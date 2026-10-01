@@ -29,6 +29,11 @@ int main() {
         const auto movSites = Relinker::MakeCallSiteResolver()->ResolveCallSites(mov, base, expectedTarget, 1);
         require(movSites.size() == 1 && movSites[0] == base, "prefixed RIP-relative MOV was not resolved");
 
+        std::vector<std::uint8_t> doubleRex = {0x41, 0x48, 0x8B, 0x05, 0, 0, 0, 0};
+        write32(doubleRex, 4, displacement);
+        const auto doubleRexSites = Relinker::MakeCallSiteResolver()->ResolveCallSites(doubleRex, base, expectedTarget, 1);
+        require(doubleRexSites.size() == 1 && doubleRexSites[0] == base, "only the final REX prefix should control a RIP-relative MOV");
+
         std::vector<std::uint8_t> call = {0x2E, 0xFF, 0x15, 0, 0, 0, 0};
         write32(call, 3, displacement);
         const auto callSites = Relinker::MakeCallSiteResolver()->ResolveCallSites(call, base, base + 7 + displacement, 1);
