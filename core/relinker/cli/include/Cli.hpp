@@ -4,6 +4,7 @@
 #include <set>
 #include <string>
 #include <cstdint>
+#include <iosfwd>
 
 namespace Cli {
 
@@ -17,6 +18,7 @@ struct Args {
     bool autorun = false;
     bool windowsDiagnostics = false;
     bool windowsGui = false;
+    bool showHelp = false;
     std::uint32_t unusedFilterLevel = 0;
     std::string inputPath;
     std::string outputPath;
@@ -25,6 +27,7 @@ struct Args {
 };
 
 Args ParseArgs(int argc, char* argv[]);
+void PrintUsage(std::ostream& output);
 
 int Autorun(const std::string& absPath, bool toWindows);
 
