@@ -1,6 +1,10 @@
 cmake_minimum_required(VERSION 3.20)
 project(Relinker CXX)
 
+if(NOT WIN32)
+    message(FATAL_ERROR "AnyPS5 is Windows-only. Configure this project with a Windows/MinGW-w64 toolchain.")
+endif()
+
 set(ANYPS5_TEST_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tests")
 
 function(add_test_executable target)
@@ -31,7 +35,7 @@ set(SDL_STATIC ON CACHE BOOL "" FORCE)
 set(SDL_TEST OFF CACHE BOOL "" FORCE)
 set(SDL_VIDEO ON CACHE BOOL "" FORCE)
 set(SDL_RENDER OFF CACHE BOOL "" FORCE)
-set(SDL_X11 ON CACHE BOOL "" FORCE)
+set(SDL_X11 OFF CACHE BOOL "" FORCE)
 set(SDL_WAYLAND OFF CACHE BOOL "" FORCE)
 set(SDL_OPENGL OFF CACHE BOOL "" FORCE)
 set(SDL_OPENGLES OFF CACHE BOOL "" FORCE)
@@ -49,8 +53,6 @@ set(ARCHITECTURE x86_64)
 add_subdirectory(3rdparty/ffmpeg-core)
 if(MINGW)
     target_link_libraries(ffmpeg INTERFACE bcrypt ole32 user32)
-elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-    target_link_options(ffmpeg INTERFACE LINKER:--exclude-libs,ALL)
 endif()
 
 set(FT_DISABLE_ZLIB ON CACHE BOOL "" FORCE)
