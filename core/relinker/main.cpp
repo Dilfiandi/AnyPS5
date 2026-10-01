@@ -35,6 +35,11 @@ int main(const int argc, char* argv[]) {
         return 1;
     }
 
+    if (args.showHelp) {
+        Cli::PrintUsage(std::cout);
+        return 0;
+    }
+
     try {
         auto extension = std::filesystem::path(args.outputPath).extension().string();
         for (auto& character : extension) if (character >= 'A' && character <= 'Z') character = static_cast<char>(character + ('a' - 'A'));
