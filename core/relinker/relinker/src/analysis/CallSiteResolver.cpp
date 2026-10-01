@@ -37,12 +37,13 @@ std::size_t ffDispOffset(const std::vector<std::uint8_t>& text, const Codegen::I
 bool hasRexW(const std::vector<std::uint8_t>& text, const Codegen::InstructionMatch& m) {
     const auto instruction = Codegen::DecodedInstruction{text.data() + m.Offset, m.Length};
     const auto opcodeOffset = instruction.OpcodeOffset();
+    std::uint8_t rex = 0;
     for (std::size_t i = 0; i < opcodeOffset; ++i) {
         const auto b = text[m.Offset + i];
         if (b >= RexMin && b <= RexMax)
-            return (b & RexWBit) != 0;
+            rex = b;
     }
-    return false;
+    return (rex & RexWBit) != 0;
 }
 
 bool isRipRelativeMov64(const std::vector<std::uint8_t>& text, const Codegen::InstructionMatch& m) {
