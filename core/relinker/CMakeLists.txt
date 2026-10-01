@@ -129,6 +129,7 @@ if(BUILD_TESTING)
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/X64InstructionDecoder.cpp
     )
     target_include_directories(prefixed_syscall_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/domain/include
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/include
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/include
     )
@@ -141,6 +142,7 @@ if(BUILD_TESTING)
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/X64InstructionDecoder.cpp
     )
     target_include_directories(callsite_prefix_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/domain/include
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/include
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/include
     )
