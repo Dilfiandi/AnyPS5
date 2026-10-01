@@ -11,7 +11,8 @@
 
 namespace Relinker {
 
-std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path& inputPath, const std::filesystem::path& outputPath, Domain::SysVDynamicSection& dynamic, const bool windows, const bool toIntel, ISyscallScanner& syscallScanner, const bool lazyBinding, const std::string& runPath, const std::set<std::string>& excludedModules) const {
+std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path& inputPath, const std::filesystem::path& outputPath, Domain::SysVDynamicSection& dynamic, const bool windows, const bool toIntel, ISyscallScanner& syscallScanner, const bool lazyBinding, const std::string&, const std::set<std::string>& excludedModules) const {
+    if (!windows) throw Domain::RelinkerException("Guest modules support Windows output only");
     const auto root = std::filesystem::absolute(inputPath).parent_path();
     const auto singular = root / "sce_module";
     const auto plural = root / "sce_modules";
@@ -133,14 +134,7 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
         Io::AppendString(dynamic.DynStrData, name);
     };
     const auto relativeDirectory = "app0/" + directory.filename().generic_string();
-    for (const auto index : order) if (!windows) addNeeded("$ORIGIN/" + relativeDirectory + "/" + images[index].OutputName);
     for (const auto& name : hostLibraries) addNeeded(name);
-    std::string guestRunPath = runPath;
-    if (!windows) {
-        if (guestRunPath == "$ORIGIN") guestRunPath = "$ORIGIN/../..";
-        else if (guestRunPath.starts_with("$ORIGIN/")) guestRunPath.insert(8, "../../");
-        else if (!std::filesystem::path(guestRunPath).is_absolute()) throw Domain::RelinkerException("Guest Linux run path must be absolute or begin with $ORIGIN");
-    }
     std::vector<GuestArtifact> artifacts;
     const auto destination = std::filesystem::absolute(outputPath).parent_path() / relativeDirectory;
     for (const auto index : order) {
@@ -152,14 +146,7 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
         Domain::GuestRuntime runtime;
         runtime.UsePlatformTlsResolver = image.UsePlatformTlsResolver;
         runtime.Path = relativeDirectory + "/" + image.OutputName;
-        std::vector<std::uint8_t> output;
-        if (windows) output = Elfpatcher::GuestModuleWriter().WriteWindows(image, runtime);
-        else {
-            std::vector<std::string> needed;
-            for (const auto dependency : dependencies[index]) needed.push_back("$ORIGIN/" + images[dependency].OutputName);
-            needed.insert(needed.end(), hostLibraries.begin(), hostLibraries.end());
-            output = Elfpatcher::GuestModuleWriter().WriteLinux(image, needed, guestRunPath);
-        }
+        auto output = Elfpatcher::GuestModuleWriter().WriteWindows(image, runtime);
         dynamic.GuestModules.push_back(std::move(runtime));
         artifacts.push_back({target, std::move(output)});
     }
