@@ -9,6 +9,8 @@ The portable Windows release includes `AnyPS5.exe`, a native Win32 front end for
 5. Keep **Copy portable runtime libraries beside output** enabled for the easiest runtime layout.
 6. Click **Convert to Windows**.
 
+The GUI validates the first four bytes of the selected input before conversion. A plain ELF is marked as supported, a PS5 SELF container is identified explicitly, and unsupported or unreadable files are blocked before the relinker starts. Renaming a SELF file does not change its format.
+
 The GUI displays the relinker output in its log pane. It does not include game files, firmware, keys, or proprietary libraries. Game resources still need to be placed in the expected `app0` layout next to the generated executable.
 
 ## Main options
