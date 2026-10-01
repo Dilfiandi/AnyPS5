@@ -26,8 +26,13 @@ int main() {
 
         std::vector<std::uint8_t> mov = {0x2E, 0x48, 0x8B, 0x05, 0, 0, 0, 0};
         write32(mov, 4, displacement);
-        const auto movSites = Relinker::MakeCallSiteResolver()->ResolveCallSites(mov, base, expectedTarget, 1);
+        const auto resolver = Relinker::MakeCallSiteResolver();
+        const auto movSites = resolver->ResolveCallSites(mov, base, expectedTarget, 1);
         require(movSites.size() == 1 && movSites[0] == base, "prefixed RIP-relative MOV was not resolved");
+
+        constexpr std::uint64_t movedBase = base + 0x1000;
+        const auto movedSites = resolver->ResolveCallSites(mov, movedBase, movedBase + 8 + displacement, 1);
+        require(movedSites.size() == 1 && movedSites[0] == movedBase, "cached call sites must follow the text virtual address");
 
         std::vector<std::uint8_t> doubleRex = {0x41, 0x48, 0x8B, 0x05, 0, 0, 0, 0};
         write32(doubleRex, 4, displacement);

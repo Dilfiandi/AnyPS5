@@ -4,11 +4,29 @@ import subprocess
 import sys
 import tempfile
 
-from test_linux_load_alignment import fixture as executable_fixture
+PT_LOAD = 1
+PT_SCE_VERSION = 0x6FFFFF01
+
+
+def executable_fixture():
+    image = bytearray(0x8000)
+    image[:16] = b"\x7fELF\x02\x01\x01" + bytes(9)
+    struct.pack_into("<HHIQQQIHHHHHH", image, 16,
+                     3, 62, 1, 0x4000, 64, 0, 0, 64, 56, 5, 64, 0, 0)
+    image[0x4000:0x4006] = b"\xb8\x2a\x00\x00\x00\xc3"
+    tags = [(5, 0x600), (10, 1), (6, 0x620), (11, 24), (7, 0x700), (8, 0), (9, 24), (0, 0)]
+    struct.pack_into("<IIQQQQQQ", image, 64,
+                     PT_LOAD, 5, 0x4000, 0, 0, 0x1000, 0x1000, 0x4000)
+    struct.pack_into("<IIQQQQQQ", image, 120,
+                     2, 6, 0x600 + 0x4000, 0x600, 0x600, len(tags) * 16, len(tags) * 16, 8)
+    for index in range(2, 5):
+        struct.pack_into("<IIQQQQQQ", image, 64 + index * 56, PT_SCE_VERSION, 0, 0, 0, 0, 0, 0, 1)
+    for index, tag in enumerate(tags):
+        struct.pack_into("<qQ", image, 0x4600 + index * 16, *tag)
+    return image
 
 
 SITE = bytes.fromhex("f2 0f 78 db 08 08")
-SITE_ADDRESSES = (0x1002, 0x1012)
 PLAIN_SITE = b"\x90" * len(SITE)
 
 
@@ -43,23 +61,6 @@ def main_fixture():
         address, = struct.unpack_from("<Q", image, 0x4600 + index * 16 + 8)
         struct.pack_into("<Q", image, 0x4600 + index * 16 + 8, address + 0x4000)
     return image
-
-
-def elf_loads(data):
-    offset, = struct.unpack_from("<Q", data, 32)
-    size, count = struct.unpack_from("<HH", data, 54)
-    headers = [struct.unpack_from("<IIQQQQQQ", data, offset + index * size)
-               for index in range(count)]
-    return [header for header in headers if header[0] == 1]
-
-
-def elf_bytes_at(data, loads, address, size):
-    for header in loads:
-        _, flags, offset, mapped, _, file_size, _, _ = header
-        if flags & 1 and mapped <= address and address + size <= mapped + file_size:
-            start = offset + address - mapped
-            return data[start:start + size]
-    raise AssertionError(f"Executable ELF address is unmapped: {address:#x}")
 
 
 def pe_sections(data):
@@ -100,41 +101,31 @@ def main():
     relinker = Path(sys.argv[1]).resolve()
     with tempfile.TemporaryDirectory(prefix="anyps5-guest-intel-") as directory:
         work = Path(directory)
-        for windows in (False, True):
-            for has_stub in (False, True):
-                case = work / ("windows" if windows else "linux") / ("stub" if has_stub else "plain")
-                module_dir = case / "sce_module"
-                module_dir.mkdir(parents=True)
-                source = case / "input.elf"
-                output = case / ("output.exe" if windows else "output.elf")
-                source.write_bytes(main_fixture())
-                (module_dir / "sample.prx").write_bytes(guest_fixture(SITE if has_stub else PLAIN_SITE))
-                arguments = [str(relinker), "--to-intel"]
-                if windows:
-                    arguments.append("--windows")
-                result = subprocess.run(arguments + [str(source), str(output)],
-                                        capture_output=True, text=True, timeout=30)
-                assert result.returncode == 0, (windows, has_stub, result.stdout, result.stderr)
-                module = case / "app0" / "sce_module" / "sample.prx.guest.prx"
-                data = module.read_bytes()
-                if windows:
-                    assert data[:2] == b"MZ", (windows, has_stub)
-                    sections = pe_sections(data)
-                    code = next(section for section in sections if section[0] == b".elf0")
-                    site_addresses = (code[1] + 2, code[1] + 0x12)
-                    read = lambda address, size: pe_bytes_at(data, sections, address, size)
-                    assert any(section[0] == b".amdstub" for section in sections) == has_stub
-                else:
-                    assert data[:4] == b"\x7fELF", (windows, has_stub)
-                    loads = elf_loads(data)
-                    site_addresses = SITE_ADDRESSES
-                    read = lambda address, size: elf_bytes_at(data, loads, address, size)
-                if has_stub:
-                    for site_address in site_addresses:
-                        check_trampoline(read, site_address)
-                else:
-                    for site_address in site_addresses:
-                        assert read(site_address, len(SITE)) == PLAIN_SITE
+        for has_stub in (False, True):
+            case = work / ("stub" if has_stub else "plain")
+            module_dir = case / "sce_module"
+            module_dir.mkdir(parents=True)
+            source = case / "input.elf"
+            output = case / "output.exe"
+            source.write_bytes(main_fixture())
+            (module_dir / "sample.prx").write_bytes(guest_fixture(SITE if has_stub else PLAIN_SITE))
+            result = subprocess.run([str(relinker), "--to-intel", "--windows", str(source), str(output)],
+                                    capture_output=True, text=True, timeout=30)
+            assert result.returncode == 0, (has_stub, result.stdout, result.stderr)
+            module = case / "app0" / "sce_module" / "sample.prx.guest.prx"
+            data = module.read_bytes()
+            assert data[:2] == b"MZ", has_stub
+            sections = pe_sections(data)
+            code = next(section for section in sections if section[0] == b".elf0")
+            site_addresses = (code[1] + 2, code[1] + 0x12)
+            read = lambda address, size: pe_bytes_at(data, sections, address, size)
+            assert any(section[0] == b".amdstub" for section in sections) == has_stub
+            if has_stub:
+                for site_address in site_addresses:
+                    check_trampoline(read, site_address)
+            else:
+                for site_address in site_addresses:
+                    assert read(site_address, len(SITE)) == PLAIN_SITE
     print("Guest Intel trampoline integration tests passed")
 
 

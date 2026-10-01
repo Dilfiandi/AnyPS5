@@ -72,14 +72,15 @@ public:
     std::vector<FileByteOffset> ResolveCallSites(const std::vector<std::uint8_t>& textSection, FileByteOffset textSectionVAddr, VirtualAddress targetGotOrPltAddress, ByteCount targetGotOrPltSize) override;
 private:
     const std::vector<std::uint8_t>* _cachedTextPtr = nullptr;
+    FileByteOffset _cachedTextVAddr = 0;
     std::map<VirtualAddress, FileByteOffset> _cachedTargetToInstr;
 };
 
 std::vector<FileByteOffset> CallSiteResolver::ResolveCallSites(const std::vector<std::uint8_t>& textSection, const FileByteOffset textSectionVAddr, const VirtualAddress targetGotOrPltAddress, const ByteCount targetGotOrPltSize) {
     if (textSection.empty()) return {};
-    if (_cachedTextPtr != &textSection) {
+    if (_cachedTextPtr != &textSection || _cachedTextVAddr != textSectionVAddr) {
         auto scanner = Codegen::MakeInstructionScanner();
-        auto instructions = scanner->ScanCodeSection(textSection, textSectionVAddr, textSection.size());
+        auto instructions = scanner->ScanCodeSection(textSection, 0, textSection.size());
         _cachedTargetToInstr.clear();
         for (const auto& m : instructions) {
             std::size_t dispOff = 0;
@@ -91,11 +92,12 @@ std::vector<FileByteOffset> CallSiteResolver::ResolveCallSites(const std::vector
                 continue;
             if (dispOff + 4 > textSection.size()) continue;
             std::int32_t disp = readDisp32(textSection, dispOff);
-            VirtualAddress instrEnd = m.Offset + static_cast<VirtualAddress>(m.Length);
+            VirtualAddress instrEnd = textSectionVAddr + m.Offset + static_cast<VirtualAddress>(m.Length);
             VirtualAddress target = static_cast<VirtualAddress>(static_cast<std::int64_t>(instrEnd) + disp);
-            _cachedTargetToInstr.emplace(target, m.Offset);
+            _cachedTargetToInstr.emplace(target, textSectionVAddr + m.Offset);
         }
         _cachedTextPtr = &textSection;
+        _cachedTextVAddr = textSectionVAddr;
     }
 
     std::vector<FileByteOffset> sites;
