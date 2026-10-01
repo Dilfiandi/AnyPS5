@@ -24,6 +24,14 @@ The [shader recompiler](core/shader/recompiler/Recompiler.cpp) successfully prod
 
 [Technical debt of the project](docs/dev/TechnicalDebt.md), [code style conventions](docs/dev/CONVENTIONS.md), [contributing](CONTRIBUTING.md)
 
+## Portable Windows GUI
+
+GitHub Releases provide a portable Windows ZIP containing `AnyPS5.exe`, `relinker.exe`, the required PRX libraries, and MinGW runtime DLLs. Extract the complete ZIP and launch `AnyPS5.exe`; no installer is required.
+
+The GUI lets you select a PS5 executable, choose the output `.exe`, enable common relinker options, view conversion logs, and copy the bundled runtime libraries beside the generated executable automatically.
+
+See the [Windows GUI guide](docs/user/GUI.md) for usage details. Download builds from [GitHub Releases](https://github.com/Dilfiandi/AnyPS5/releases).
+
 ## Build
 
 The relinker uses only the C++20 standard library and should build with a conforming compiler.

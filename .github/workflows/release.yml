@@ -2,17 +2,19 @@ name: Release
 
 on:
   push:
-    tags: ['v*']
+    branches: [main]
+    paths:
+      - release/VERSION
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release
   cancel-in-progress: false
 
 env:
-  RELEASE_TAG: ${{ github.ref_name }}
   CONFIGURE: >-
     -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
     -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++
@@ -22,9 +24,11 @@ env:
 
 jobs:
   build:
-    name: Build and test (Windows)
+    name: Build and test portable Windows release
     runs-on: windows-latest
     timeout-minutes: 45
+    outputs:
+      release_tag: ${{ steps.version.outputs.tag }}
     defaults:
       run:
         shell: bash
@@ -32,34 +36,56 @@ jobs:
       - uses: actions/checkout@v7
         with:
           submodules: true
+
+      - id: version
+        name: Read release version
+        shell: bash
+        run: |
+          tag="$(tr -d '\r\n' < release/VERSION)"
+          case "$tag" in
+            v[0-9A-Za-z]*) ;;
+            *) echo "Invalid release version: $tag" >&2; exit 1 ;;
+          esac
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
       - id: toolchain
         uses: actions/cache@v6
         with:
           path: C:\winlibs
           key: ${{ env.WINLIBS_ZIP }}
+
       - if: steps.toolchain.outputs.cache-hit != 'true'
         run: |
           curl -sSfL -o "$RUNNER_TEMP/winlibs.zip" "https://github.com/brechtsanders/winlibs_mingw/releases/download/$WINLIBS_RELEASE/$WINLIBS_ZIP"
           7z x "$RUNNER_TEMP/winlibs.zip" -oC:/winlibs
+
       - run: echo 'C:\winlibs\mingw64\bin' >> "$GITHUB_PATH"
+
       - uses: hendrikmuhs/ccache-action@v1.2.24
         with:
           key: windows
           save: false
+
       - name: Configure Windows
         shell: cmd
         run: cmake -S . -B build %CONFIGURE%
-      - name: Build project and tests
+
+      - name: Build project and GUI
         shell: cmd
         run: cmake --build build
+
       - name: Run tests
         shell: cmd
         run: ctest --test-dir build --output-on-failure --timeout 120 --stop-on-failure --no-tests=error
+
       - name: Build patched libraries
         shell: cmd
         run: cmake --build build --target libs
-      - name: Package Windows release files
-        run: python tools/package_release.py --platform windows --build build --output dist --version "$RELEASE_TAG"
+
+      - name: Package portable Windows release
+        shell: bash
+        run: python tools/package_release.py --build build --output dist --version "${{ steps.version.outputs.tag }}"
+
       - uses: actions/upload-artifact@v7
         with:
           name: release-windows
@@ -68,7 +94,7 @@ jobs:
           compression-level: 0
 
   publish:
-    name: Publish release
+    name: Publish GitHub release
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -77,21 +103,34 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
+      RELEASE_TAG: ${{ needs.build.outputs.release_tag }}
     steps:
       - uses: actions/checkout@v7
+
       - uses: actions/download-artifact@v8
         with:
           name: release-windows
           merge-multiple: true
           path: dist
+
       - name: Check release files and collect documentation
         shell: bash
         run: |
-          for file in "prx-windows-$RELEASE_TAG.zip" "prx-windows-$RELEASE_TAG.tar.gz" "relinker-$RELEASE_TAG.exe"; do
+          for file in             "AnyPS5-portable-$RELEASE_TAG.zip"             "prx-windows-$RELEASE_TAG.zip"             "prx-windows-$RELEASE_TAG.tar.gz"             "relinker-$RELEASE_TAG.exe"; do
             test -s "dist/$file"
           done
           python tools/package_release.py --docs docs/user --output dist
+
+      - name: Ensure version is not already released
+        shell: bash
+        run: |
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            echo "Release $RELEASE_TAG already exists." >&2
+            exit 1
+          fi
+
       - name: Create draft and upload files
-        run: gh release create "$RELEASE_TAG" dist/* --verify-tag --draft --title "$RELEASE_TAG" --generate-notes
+        run: gh release create "$RELEASE_TAG" dist/* --target "$GITHUB_SHA" --draft --title "$RELEASE_TAG" --generate-notes
+
       - name: Publish complete release
         run: gh release edit "$RELEASE_TAG" --draft=false

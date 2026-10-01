@@ -65,15 +65,15 @@ Args ParseArgs(int argc, char* argv[]) {
 
     if (args.inputPath.empty() || args.outputPath.empty())
         throw std::runtime_error(
-            "Usage: relinker [--windows-diagnostics] [--windows-gui] [--skip-syscall-check] [--skip-sce-module] [--exclude-sce-module <file>]... [--to-intel] [unused-filter=0|1|2] [--registry] [--rpath <path>] [--lazy-binding] [--autorun] <input.elf> <output.elf>\n"
-            "Example: relinker input.elf output.elf"
+            "Usage: relinker [--windows-diagnostics] [--windows-gui] [--skip-syscall-check] [--skip-sce-module] [--exclude-sce-module <file>]... [--to-intel] [unused-filter=0|1|2] [--registry] [--rpath <path>] [--lazy-binding] [--autorun] <input.elf> <output.exe>\n"
+            "Example: relinker input.elf output.exe"
         );
 
     return args;
 }
 
 void PrintUsage(std::ostream& output) {
-    output << "Usage: relinker [options] <input.elf> <output.elf>\n"
+    output << "Usage: relinker [options] <input.elf> <output.exe>\n"
            << "\n"
            << "Options:\n"
            << "  -h, --help                              Show this help message\n"
@@ -90,7 +90,7 @@ void PrintUsage(std::ostream& output) {
            << "      --lazy-binding                      Enable lazy symbol binding\n"
            << "      --autorun                           Run the generated executable\n"
            << "\n"
-           << "Example: relinker --to-intel input.elf output.elf\n";
+           << "Example: relinker --to-intel input.elf output.exe\n";
 }
 
 }
