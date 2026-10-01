@@ -2,11 +2,6 @@
 #include <domain/Types.hpp>
 #include <io/FileReader.hpp>
 #include <io/FileWriter.hpp>
-#include <elfpatcher/linux/LinuxElfPatcher.hpp>
-#include <elfpatcher/general/SegmentFilter.hpp>
-#include <elfpatcher/general/EntryStubBuilder.hpp>
-#include <elfpatcher/general/ProgramHeaderLayoutBuilder.hpp>
-#include <elfpatcher/general/SectionHeaderTableBuilder.hpp>
 #include <elfpatcher/windows/WindowsElfPatcher.hpp>
 #include <io/ByteWriter.hpp>
 #include <relinker/parsing/ElfReader.hpp>
@@ -41,9 +36,6 @@ int main(const int argc, char* argv[]) {
     }
 
     try {
-        auto extension = std::filesystem::path(args.outputPath).extension().string();
-        for (auto& character : extension) if (character >= 'A' && character <= 'Z') character = static_cast<char>(character + ('a' - 'A'));
-        if (!args.toWindows && extension == ".exe") std::cerr << "WARNING: Output filename ends with .exe, but --windows was not specified. The output will be a Linux ELF executable.\n";
         Io::FileReader fileReader;
         Io::FileWriter fileWriter;
 
@@ -74,7 +66,7 @@ int main(const int argc, char* argv[]) {
             args.unusedFilterLevel
         );
 
-        std::cout << "System: " << (args.toWindows ? "Windows" : "Linux") << "; unused-filter=" << args.unusedFilterLevel << "\n";
+        std::cout << "System: Windows; unused-filter=" << args.unusedFilterLevel << "\n";
         std::cout << "sce_module/sce_modules processing: " << (args.skipSceModule ? "disabled (--skip-sce-module)" : "enabled") << '\n';
         for (const auto& name : args.excludedSceModules) std::cout << "sce_module excluded: " << name << '\n';
         auto result = pipeline->Relink(sourceBytes);
@@ -86,7 +78,7 @@ int main(const int argc, char* argv[]) {
 
         std::vector<Relinker::GuestArtifact> guestArtifacts;
         if (!args.skipSceModule) {
-            guestArtifacts = Relinker::GuestModuleBuilder().Build(args.inputPath, absPath, result.DynamicSection, args.toWindows, args.toIntel, *syscallScanner, args.lazyBinding, args.runPath, args.excludedSceModules);
+            guestArtifacts = Relinker::GuestModuleBuilder().Build(args.inputPath, absPath, result.DynamicSection, true, args.toIntel, *syscallScanner, args.lazyBinding, args.runPath, args.excludedSceModules);
         }
 
         if (args.writeRegistry) {
@@ -95,22 +87,7 @@ int main(const int argc, char* argv[]) {
             fileWriter.Write(registryPath, std::make_shared<Relinker::CallRegistryWriter>()->WriteCallRegistry(result.RegistryEntries));
         }
 
-        auto byteWriter = std::make_shared<Io::ByteWriter>();
-
-        std::shared_ptr<Elfpatcher::IElfPatcher> patcher;
-        if (args.toWindows) {
-            patcher = std::make_shared<Elfpatcher::Windows::WindowsPePatcher>(args.windowsGui);
-        } else {
-            patcher = std::make_shared<Elfpatcher::Linux::LinuxElfPatcher>(
-                std::make_shared<Elfpatcher::EntryStubBuilder>(),
-                std::make_shared<Elfpatcher::ProgramHeaderLayoutBuilder>(
-                    std::make_shared<Elfpatcher::SegmentFilter>(),
-                    byteWriter
-                ),
-                std::make_shared<Elfpatcher::SectionHeaderTableBuilder>(byteWriter),
-                byteWriter
-            );
-        }
+        auto patcher = std::make_shared<Elfpatcher::Windows::WindowsPePatcher>(args.windowsGui);
 
         const auto executableBytes = patcher->Patch(sourceBytes, result.OriginalHeaders, result.DynamicSection, result.OriginalPltGotVaddr, args.runPath, args.lazyBinding, args.windowsDiagnostics, trampolines);
         for (const auto& artifact : guestArtifacts) {
@@ -130,7 +107,7 @@ int main(const int argc, char* argv[]) {
         std::cout << "Game resources and system libraries must be placed in this layout separately.\n";
         if (args.runPath != "$ORIGIN/libs") std::cout << "Custom library search path (--rpath): " << args.runPath << '\n';
 
-        if (args.autorun) return Cli::Autorun(absPath, args.toWindows);
+        if (args.autorun) return Cli::Autorun(absPath, true);
 
     } catch (const Domain::RelinkerException& e) {
         std::cerr << "FAIL: " << e.what();
