@@ -1,5 +1,6 @@
 #include <relinker/analysis/CallSiteResolver.hpp>
 #include <codegen/IInstructionScanner.hpp>
+#include <codegen/x86/DecodedInstruction.hpp>
 #include <codegen/x86/X64OpcodeConstants.hpp>
 #include <cstring>
 #include <memory>
@@ -17,50 +18,52 @@ std::int32_t readDisp32(const std::vector<std::uint8_t>& text, std::size_t offse
 }
 
 bool isRipRelativeFF(const std::vector<std::uint8_t>& text, const Codegen::InstructionMatch& m) {
-    std::size_t cur = static_cast<std::size_t>(m.Offset);
-    std::size_t end = cur + m.Length;
-    while (cur < end) {
-        std::uint8_t b = text[cur];
-        if (b >= RexMin && b <= RexMax) { ++cur; continue; }
-        if (b == OneByteGrp5Rm && cur + 2 <= end) {
-            std::uint8_t modrm = text[cur + 1];
-            std::uint8_t mod = (modrm >> ModRmModShift) & ModRmModMask;
-            std::uint8_t rm = modrm & ModRmRmMask;
-            return mod == ModRmModIndirect && rm == ModRmRmRipRelative;
-        }
-        break;
-    }
-    return false;
+    const Codegen::DecodedInstruction instruction{text.data() + m.Offset, m.Length};
+    const auto opcode = static_cast<std::size_t>(instruction.OpcodeOffset());
+    const auto modrmOffset = opcode + 1;
+    if (opcode >= m.Length || text[m.Offset + opcode] != OneByteGrp5Rm || modrmOffset >= m.Length)
+        return false;
+    const std::uint8_t modrm = text[m.Offset + modrmOffset];
+    const std::uint8_t mod = (modrm >> ModRmModShift) & ModRmModMask;
+    const std::uint8_t rm = modrm & ModRmRmMask;
+    return mod == ModRmModIndirect && rm == ModRmRmRipRelative;
 }
 
 std::size_t ffDispOffset(const std::vector<std::uint8_t>& text, const Codegen::InstructionMatch& m) {
-    std::size_t cur = static_cast<std::size_t>(m.Offset);
-    while (text[cur] >= RexMin && text[cur] <= RexMax) ++cur;
-    return cur + 2;
+    const Codegen::DecodedInstruction instruction{text.data() + m.Offset, m.Length};
+    return static_cast<std::size_t>(m.Offset) + instruction.OpcodeOffset() + 2;
+}
+
+bool hasRexW(const std::vector<std::uint8_t>& text, const Codegen::InstructionMatch& m) {
+    const auto instruction = Codegen::DecodedInstruction{text.data() + m.Offset, m.Length};
+    const auto opcodeOffset = instruction.OpcodeOffset();
+    std::uint8_t rex = 0;
+    for (std::size_t i = 0; i < opcodeOffset; ++i) {
+        const auto b = text[m.Offset + i];
+        if (b >= RexMin && b <= RexMax)
+            rex = b;
+    }
+    return (rex & RexWBit) != 0;
 }
 
 bool isRipRelativeMov64(const std::vector<std::uint8_t>& text, const Codegen::InstructionMatch& m) {
-    std::size_t cur = static_cast<std::size_t>(m.Offset);
-    std::size_t end = cur + m.Length;
-    bool hasRexW = false;
-    while (cur < end) {
-        std::uint8_t b = text[cur];
-        if (b >= RexMin && b <= RexMax) { if (b & RexWBit) hasRexW = true; ++cur; continue; }
-        if (hasRexW && b == OneByteModRmRangeJMax && cur + 2 <= end) {
-            std::uint8_t modrm = text[cur + 1];
-            std::uint8_t mod = (modrm >> ModRmModShift) & ModRmModMask;
-            std::uint8_t rm = modrm & ModRmRmMask;
-            return mod == ModRmModIndirect && rm == ModRmRmRipRelative;
-        }
-        break;
-    }
-    return false;
+    const Codegen::DecodedInstruction instruction{text.data() + m.Offset, m.Length};
+    const auto opcodeOffset = instruction.OpcodeOffset();
+    if (opcodeOffset >= m.Length || text[m.Offset + opcodeOffset] < OneByteModRmRangeJMin ||
+        text[m.Offset + opcodeOffset] > OneByteModRmRangeJMax || !hasRexW(text, m))
+        return false;
+    const auto modrmOffset = opcodeOffset + 1;
+    if (modrmOffset >= m.Length)
+        return false;
+    const std::uint8_t modrm = text[m.Offset + modrmOffset];
+    const std::uint8_t mod = (modrm >> ModRmModShift) & ModRmModMask;
+    const std::uint8_t rm = modrm & ModRmRmMask;
+    return mod == ModRmModIndirect && rm == ModRmRmRipRelative;
 }
 
 std::size_t mov64DispOffset(const std::vector<std::uint8_t>& text, const Codegen::InstructionMatch& m) {
-    std::size_t cur = static_cast<std::size_t>(m.Offset);
-    while (text[cur] >= RexMin && text[cur] <= RexMax) ++cur;
-    return cur + 2;
+    const Codegen::DecodedInstruction instruction{text.data() + m.Offset, m.Length};
+    return static_cast<std::size_t>(m.Offset) + instruction.OpcodeOffset() + 2;
 }
 }
 
