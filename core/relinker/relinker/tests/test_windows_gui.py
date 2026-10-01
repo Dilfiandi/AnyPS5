@@ -33,10 +33,11 @@ def main():
         assert result.returncode == 0, (result.stdout, result.stderr)
         assert subsystem(gui_output.read_bytes()) == 2, "expected IMAGE_SUBSYSTEM_WINDOWS_GUI with --windows-gui"
 
-        bad_output = work / "bad.exe"
-        result = subprocess.run([str(relinker), "--skip-sce-module", "--windows-gui", str(source), str(bad_output)],
+        default_output = work / "default-gui.exe"
+        result = subprocess.run([str(relinker), "--skip-sce-module", "--windows-gui", str(source), str(default_output)],
                                 capture_output=True, text=True, timeout=20)
-        assert result.returncode != 0 and not bad_output.exists(), result
+        assert result.returncode == 0, (result.stdout, result.stderr)
+        assert subsystem(default_output.read_bytes()) == 2, "Windows GUI must work without the optional --windows flag"
     print("Windows GUI subsystem integration tests passed")
 
 

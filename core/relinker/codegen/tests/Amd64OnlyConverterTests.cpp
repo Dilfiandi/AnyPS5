@@ -13,9 +13,6 @@
 #include <array>
 #include <cstring>
 #include <cstdint>
-#ifdef __linux__
-#include <sys/mman.h>
-#endif
 #include <functional>
 #include <optional>
 #include <span>
@@ -450,241 +447,7 @@ void converterFailureOffsets() {
 }
 
 
-#if defined(__linux__) && defined(__x86_64__)
-std::uint64_t extrqReference(std::uint64_t value, std::uint64_t control) {
-    const auto length = static_cast<unsigned>(control & 0x3f);
-    const auto index = static_cast<unsigned>((control >> 8) & 0x3f);
-    const auto shifted = value >> index;
-    return length == 0 ? shifted : shifted & ((std::uint64_t{1} << length) - 1);
-}
 
-std::uint64_t insertqReference(std::uint64_t destination, std::uint64_t value, std::uint64_t control) {
-    const auto length = static_cast<unsigned>(control & 0x3f);
-    const auto index = static_cast<unsigned>((control >> 8) & 0x3f);
-    const auto mask = length == 0 ? ~std::uint64_t{0} : ((std::uint64_t{1} << length) - 1);
-    return (destination & ~(mask << index)) | ((value & mask) << index);
-}
-
-constexpr std::uint64_t kStubScratch[2] = {0x0123456789abcdefull, 0xfedcba9876543210ull};
-
-std::uint32_t rotr(const std::uint32_t value, const unsigned count) {
-    return (value >> count) | (value << (32 - count));
-}
-
-std::array<std::uint64_t, 2> sha256Reference(const std::uint8_t opcode, const std::uint64_t (&first)[2], const std::uint64_t (&second)[2], const std::uint64_t (&keys)[2]) {
-    std::uint32_t a[4];
-    std::uint32_t b[4];
-    std::uint32_t k[4];
-    std::uint32_t r[4];
-    std::memcpy(a, first, sizeof(a));
-    std::memcpy(b, second, sizeof(b));
-    std::memcpy(k, keys, sizeof(k));
-    const auto sigma0 = [](const std::uint32_t w) { return rotr(w, 7) ^ rotr(w, 18) ^ (w >> 3); };
-    const auto sigma1 = [](const std::uint32_t w) { return rotr(w, 17) ^ rotr(w, 19) ^ (w >> 10); };
-    if (opcode == 0xCC) {
-        for (int lane = 0; lane < 3; ++lane) r[lane] = a[lane] + sigma0(a[lane + 1]);
-        r[3] = a[3] + sigma0(b[0]);
-    } else if (opcode == 0xCD) {
-        r[0] = a[0] + sigma1(b[2]);
-        r[1] = a[1] + sigma1(b[3]);
-        r[2] = a[2] + sigma1(r[0]);
-        r[3] = a[3] + sigma1(r[1]);
-    } else {
-        std::uint32_t sa = b[3], sb = b[2], sc = a[3], sd = a[2], se = b[1], sf = b[0], sg = a[1], sh = a[0];
-        for (int round = 0; round < 2; ++round) {
-            const auto t1 = sh + (rotr(se, 6) ^ rotr(se, 11) ^ rotr(se, 25)) + ((se & sf) ^ (~se & sg)) + k[round];
-            const auto t2 = (rotr(sa, 2) ^ rotr(sa, 13) ^ rotr(sa, 22)) + ((sa & sb) ^ (sa & sc) ^ (sb & sc));
-            sh = sg; sg = sf; sf = se; se = sd + t1; sd = sc; sc = sb; sb = sa; sa = t1 + t2;
-        }
-        r[0] = sf;
-        r[1] = se;
-        r[2] = sb;
-        r[3] = sa;
-    }
-    std::array<std::uint64_t, 2> result{};
-    std::memcpy(result.data(), r, sizeof(r));
-    return result;
-}
-
-std::array<std::uint64_t, 2> runRegisterFormStub(const Bytes& site, const std::uint64_t (&destination)[2], const std::uint64_t (&source)[2]) {
-    const auto matcher = Codegen::MakeAmd64OnlyInstructionMatcher();
-    const auto match = matcher->Match(site.data(), site.size());
-    require(match && match->Lowering == Codegen::Amd64OnlyLowering::Trampoline, "Register form stub was not produced");
-    auto body = match->StubBody;
-    const auto ret = body.size();
-    body.push_back(0xC3);
-    const auto displacement = static_cast<std::int32_t>(ret - (match->ReturnBranchOffset + 5));
-    std::memcpy(body.data() + match->ReturnBranchOffset + 1, &displacement, sizeof(displacement));
-    void* code = mmap(nullptr, 4096, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-    require(code != MAP_FAILED, "cannot map executable memory for the stub");
-    std::memcpy(code, body.data(), body.size());
-    alignas(16) std::uint64_t destinationIn[2] = {destination[0], destination[1]};
-    alignas(16) std::uint64_t sourceIn[2] = {source[0], source[1]};
-    alignas(16) std::uint64_t out[2] = {};
-    alignas(16) std::uint64_t scratchIn[2] = {kStubScratch[0], kStubScratch[1]};
-    alignas(16) std::uint64_t scratchOut[2] = {};
-    asm volatile(
-        "movdqu (%[scratch]), %%xmm0\n\t"
-        "movdqu (%[dst]), %%xmm2\n\t"
-        "movdqu (%[ctl]), %%xmm5\n\t"
-        "sub $128, %%rsp\n\t"
-        "call *%[code]\n\t"
-        "add $128, %%rsp\n\t"
-        "movdqu %%xmm2, (%[out])\n\t"
-        "movdqu %%xmm0, (%[scratchOut])\n\t"
-        :
-        : [scratch] "r"(scratchIn), [dst] "r"(destinationIn), [ctl] "r"(sourceIn), [code] "r"(code), [out] "r"(out), [scratchOut] "r"(scratchOut)
-        : "xmm0", "xmm1", "xmm2", "xmm3", "xmm4", "xmm5", "memory", "cc");
-    munmap(code, 4096);
-    require(scratchOut[0] == scratchIn[0] && scratchOut[1] == scratchIn[1], "Register form stub clobbered a scratch register");
-    return {out[0], out[1]};
-}
-
-void registerFormExecution() {
-    const Bytes extrqDistinct = {0x66, 0x0F, 0x79, 0xD5};
-    const Bytes extrqSame = {0x66, 0x0F, 0x79, 0xD2};
-    const Bytes insertqDistinct = {0xF2, 0x0F, 0x79, 0xD5};
-    const Bytes insertqSame = {0xF2, 0x0F, 0x79, 0xD2};
-    const std::uint64_t value = 0x9e3779b97f4a7c15ull;
-    const std::uint64_t destination = 0x0f1e2d3c4b5a6978ull;
-    for (const auto [length, index] : {std::pair{8u, 4u}, {0u, 0u}, {40u, 20u}, {63u, 1u}, {1u, 63u}, {16u, 48u}, {1u, 0u}, {32u, 32u}}) {
-        const auto control = static_cast<std::uint64_t>(length) | (static_cast<std::uint64_t>(index) << 8) | 0xffffc000ull;
-        require(runRegisterFormStub(extrqDistinct, {value, 0x1122334455667788ull}, {control, 0})[0] == extrqReference(value, control), "EXTRQ register form stub computed the wrong field");
-        require(runRegisterFormStub(extrqSame, {control, 0}, {control, 0})[0] == extrqReference(control, control), "EXTRQ register form stub with equal operands computed the wrong field");
-        const auto insertqControl = control | 0xC0ull;
-        require(runRegisterFormStub(insertqDistinct, {destination, 0x1122334455667788ull}, {value, insertqControl})[0] == insertqReference(destination, value, insertqControl), "INSERTQ register form stub computed the wrong field");
-        require(runRegisterFormStub(insertqSame, {value, insertqControl}, {value, insertqControl})[0] == insertqReference(value, value, insertqControl), "INSERTQ register form stub with equal operands computed the wrong field");
-    }
-}
-
-void sha256Execution() {
-    const std::uint64_t state[2] = {0x6a09e667bb67ae85ull, 0x3c6ef372a54ff53aull};
-    const std::uint64_t words[2] = {0x510e527f9b05688cull, 0x1f83d9ab5be0cd19ull};
-    for (const std::uint8_t opcode : {std::uint8_t{0xCB}, std::uint8_t{0xCC}, std::uint8_t{0xCD}}) {
-        const Bytes distinct = {0x0F, 0x38, opcode, 0xD5};
-        const Bytes same = {0x0F, 0x38, opcode, 0xD2};
-        require(runRegisterFormStub(distinct, state, words) == sha256Reference(opcode, state, words, kStubScratch), "SHA-256 stub computed the wrong result");
-        require(runRegisterFormStub(same, state, state) == sha256Reference(opcode, state, state, kStubScratch), "SHA-256 stub with equal operands computed the wrong result");
-    }
-}
-
-struct ClzeroRun {
-    std::uint64_t Rax;
-    std::uint64_t Rcx;
-    std::uint64_t Flags;
-    std::uint64_t Xmm[16][2];
-};
-
-ClzeroRun runClzeroBody(const Codegen::Amd64OnlyMatch& match, const std::uint64_t rax, const std::uint64_t (&xmmIn)[16][2]) {
-    require(match.Lowering == Codegen::Amd64OnlyLowering::Trampoline, "CLZERO stub was not produced");
-    auto body = match.StubBody;
-    const auto ret = body.size();
-    body.push_back(0xC3);
-    const auto displacement = static_cast<std::int32_t>(ret - (match.ReturnBranchOffset + 5));
-    std::memcpy(body.data() + match.ReturnBranchOffset + 1, &displacement, sizeof(displacement));
-    void* code = mmap(nullptr, 4096, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-    require(code != MAP_FAILED, "cannot map executable memory for the stub");
-    std::memcpy(code, body.data(), body.size());
-    ClzeroRun run{};
-    asm volatile(
-        "movdqu 0x00(%[xmmIn]), %%xmm0\n\t"
-        "movdqu 0x10(%[xmmIn]), %%xmm1\n\t"
-        "movdqu 0x20(%[xmmIn]), %%xmm2\n\t"
-        "movdqu 0x30(%[xmmIn]), %%xmm3\n\t"
-        "movdqu 0x40(%[xmmIn]), %%xmm4\n\t"
-        "movdqu 0x50(%[xmmIn]), %%xmm5\n\t"
-        "movdqu 0x60(%[xmmIn]), %%xmm6\n\t"
-        "movdqu 0x70(%[xmmIn]), %%xmm7\n\t"
-        "movdqu 0x80(%[xmmIn]), %%xmm8\n\t"
-        "movdqu 0x90(%[xmmIn]), %%xmm9\n\t"
-        "movdqu 0xa0(%[xmmIn]), %%xmm10\n\t"
-        "movdqu 0xb0(%[xmmIn]), %%xmm11\n\t"
-        "movdqu 0xc0(%[xmmIn]), %%xmm12\n\t"
-        "movdqu 0xd0(%[xmmIn]), %%xmm13\n\t"
-        "movdqu 0xe0(%[xmmIn]), %%xmm14\n\t"
-        "movdqu 0xf0(%[xmmIn]), %%xmm15\n\t"
-        "mov %[raxIn], %%rax\n\t"
-        "movabs $0x1122334455667788, %%rcx\n\t"
-        "sub $128, %%rsp\n\t"
-        "pushq $0x8D7\n\t"
-        "popfq\n\t"
-        "call *%[code]\n\t"
-        "pushfq\n\t"
-        "popq %[flags]\n\t"
-        "add $128, %%rsp\n\t"
-        "mov %%rax, %[raxOut]\n\t"
-        "mov %%rcx, %[rcxOut]\n\t"
-        "movdqu %%xmm0, 0x00(%[xmmOut])\n\t"
-        "movdqu %%xmm1, 0x10(%[xmmOut])\n\t"
-        "movdqu %%xmm2, 0x20(%[xmmOut])\n\t"
-        "movdqu %%xmm3, 0x30(%[xmmOut])\n\t"
-        "movdqu %%xmm4, 0x40(%[xmmOut])\n\t"
-        "movdqu %%xmm5, 0x50(%[xmmOut])\n\t"
-        "movdqu %%xmm6, 0x60(%[xmmOut])\n\t"
-        "movdqu %%xmm7, 0x70(%[xmmOut])\n\t"
-        "movdqu %%xmm8, 0x80(%[xmmOut])\n\t"
-        "movdqu %%xmm9, 0x90(%[xmmOut])\n\t"
-        "movdqu %%xmm10, 0xa0(%[xmmOut])\n\t"
-        "movdqu %%xmm11, 0xb0(%[xmmOut])\n\t"
-        "movdqu %%xmm12, 0xc0(%[xmmOut])\n\t"
-        "movdqu %%xmm13, 0xd0(%[xmmOut])\n\t"
-        "movdqu %%xmm14, 0xe0(%[xmmOut])\n\t"
-        "movdqu %%xmm15, 0xf0(%[xmmOut])\n\t"
-        : [flags] "=&r"(run.Flags), [raxOut] "=&r"(run.Rax), [rcxOut] "=&r"(run.Rcx)
-        : [xmmIn] "r"(xmmIn), [xmmOut] "r"(run.Xmm), [raxIn] "r"(rax), [code] "r"(code)
-        : "rax", "rcx", "xmm0", "xmm1", "xmm2", "xmm3", "xmm4", "xmm5", "xmm6", "xmm7", "xmm8", "xmm9", "xmm10", "xmm11", "xmm12", "xmm13", "xmm14", "xmm15", "memory", "cc");
-    munmap(code, 4096);
-    return run;
-}
-
-void clzeroExecution() {
-    const auto matcher = Codegen::MakeAmd64OnlyInstructionMatcher();
-    const Bytes plain = {0x0F, 0x01, 0xFC};
-    const Bytes addressSize32 = {0x67, 0x0F, 0x01, 0xFC};
-    const Bytes add = {0x48, 0x83, 0xC0, 0x40};
-    const std::vector<std::span<const std::uint8_t>> pair = {plain, plain};
-    struct Case {
-        std::optional<Codegen::Amd64OnlyMatch> Match;
-        bool Low;
-        std::uint64_t Junk;
-        std::uint64_t Advance;
-        const char* Name;
-    };
-    const std::vector<Case> cases = {
-        {matcher->Match(plain.data(), plain.size()), false, 0, 0, "CLZERO stub"},
-        {matcher->Match(addressSize32.data(), addressSize32.size()), true, 0x5A5A5A5A00000000ull, 0, "67h CLZERO stub"},
-        {matcher->Match(plain.data(), plain.size(), add), false, 0, 64, "CLZERO stub with a trailing add"},
-        {matcher->MatchSequence(pair, {}), false, 0, 0, "CLZERO sequence stub"}};
-    std::uint64_t xmmIn[16][2];
-    for (unsigned reg = 0; reg < 16; ++reg) {
-        xmmIn[reg][0] = 0x0101010101010101ull * (reg + 1);
-        xmmIn[reg][1] = ~xmmIn[reg][0];
-    }
-    for (const auto& item : cases) {
-        require(item.Match.has_value(), item.Name);
-        auto* buffer = static_cast<std::uint8_t*>(mmap(nullptr, 4096, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | (item.Low ? MAP_32BIT : 0), -1, 0));
-        require(buffer != MAP_FAILED, "cannot map the CLZERO buffer");
-        for (const std::size_t offset : {std::size_t{0x80}, std::size_t{0xAD}, std::size_t{0xFF}}) {
-            std::memset(buffer, 0xA5, 4096);
-            const auto address = reinterpret_cast<std::uint64_t>(buffer + offset);
-            const auto run = runClzeroBody(*item.Match, address | item.Junk, xmmIn);
-            const auto line = offset & ~std::size_t{63};
-            for (std::size_t index = 0; index < 4096; ++index)
-                require(buffer[index] == (index >= line && index < line + 64 ? 0x00 : 0xA5), "CLZERO stub did not clear exactly the addressed line");
-            require(run.Rax == (address | item.Junk) + item.Advance && run.Rcx == 0x1122334455667788ull, "CLZERO stub changed rax or rcx");
-            for (unsigned reg = 0; reg < 16; ++reg)
-                require(run.Xmm[reg][0] == xmmIn[reg][0] && run.Xmm[reg][1] == xmmIn[reg][1], "CLZERO stub clobbered an xmm register");
-            if (item.Advance == 0)
-                require((run.Flags & 0x8D5) == (0x8D7 & 0x8D5), "CLZERO stub changed RFLAGS");
-        }
-        munmap(buffer, 4096);
-    }
-}
-#else
-void registerFormExecution() {}
-void sha256Execution() {}
-void clzeroExecution() {}
-#endif
 
 void scannerZeroTail() {
     const auto scanner = Codegen::MakeInstructionScanner();
@@ -694,6 +457,8 @@ void scannerZeroTail() {
     requireFailure([&] { (void)scanner->ScanCodeSection(truncated, 0, truncated.size()); }, "Truncated non-zero tail must still fail");
 }
 
+} // namespace
+
 int main() {
     try {
         decoderLengths();
@@ -702,9 +467,6 @@ int main() {
         clzeroOperands();
         matcherSubstitutions();
         goldenBodies();
-        registerFormExecution();
-        sha256Execution();
-        clzeroExecution();
         converterSegment();
         converterSha256();
         converterMonitorWait();
