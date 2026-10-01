@@ -1,6 +1,6 @@
 # About
 
-Tool for automatically porting PS5 executables to Linux and Windows.
+Windows-focused tool for automatically porting PS5 executables to Windows.
 
 Includes a [relinker](core/relinker) that converts executable to the target system's native format and implementations of [system prx libraries](core/libs/prx) suitable for dynamic linking. No emulation or separate runtime process.
 
@@ -28,16 +28,6 @@ The [shader recompiler](core/shader/recompiler/Recompiler.cpp) successfully prod
 
 The relinker uses only the C++20 standard library and should build with a conforming compiler.
 
-### Linux
-
-```
-cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
-cmake --build build
-ctest --test-dir build --output-on-failure
-```
-
-Enable optional SPIR-V validation with `-DANYPS5_ENABLE_SPIRV_TOOLS=ON`. Enable frame timing logging with `-DANYPS5_ENABLE_TIMING_LOG=ON`.
-
 ### Windows
 
 The CI configuration currently builds with MinGW-w64 GCC 15.2.0 (`winlibs-gcc15`, `x86_64-ucrt-posix-seh`). Use the same toolchain when reproducing Windows CI failures.
@@ -48,12 +38,13 @@ cmake --build build
 ctest --test-dir build --output-on-failure
 ```
 
+Enable optional SPIR-V validation with `-DANYPS5_ENABLE_SPIRV_TOOLS=ON`. Enable frame timing logging with `-DANYPS5_ENABLE_TIMING_LOG=ON`.
 
 On Intel hosts, pass `--to-intel` to the relinker to lower supported AMD-only instructions in the executable and bundled `sce_module`/`sce_modules` PRX files. Unsupported instructions or stub jumps outside the x86-64 relative branch range produce an error.
 
-[libc.prx](core/libs/prx/libc) implementations contain compiler-specific code. Linux builds work with GCC; on Windows, MinGW-w64 GCC 15.2.0 (`winlibs-gcc15`, `x86_64-ucrt-posix-seh`) is currently required.
+[libc.prx](core/libs/prx/libc) contains compiler-specific code. MinGW-w64 GCC 15.2.0 (`winlibs-gcc15`, `x86_64-ucrt-posix-seh`) is currently required.
 
-The project aims for broad compiler portability; the current CI matrix should be treated as the reference toolchain set.
+Windows with the CI MinGW-w64 toolchain is the supported target. Linux builds are intentionally unsupported.
 
 ## Compatibility
 
