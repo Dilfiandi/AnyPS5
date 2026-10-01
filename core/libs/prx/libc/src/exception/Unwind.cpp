@@ -1,14 +1,13 @@
 #include "prx/libc/include/exceptions/Unwind.hpp"
-#include "prx/libc/include/specifics/linux/ElfTypes.hpp"
 #include "prx/libc/src/specifics/x86_64/RegisterContext.cpp"
 
 #ifdef _WIN32
 #include <windows.h>
 #endif
 
-#if defined(__linux__) || defined(_WIN32)
+#ifdef _WIN32
 
-#if defined(_WIN32) || defined(__linux__)
+#ifdef _WIN32
 extern "C" _Unwind_Reason_Code __gxx_personality_v0(int, _Unwind_Action, std::uint64_t, _Unwind_Exception*, _Unwind_Context*);
 #endif
 
@@ -23,48 +22,12 @@ bool OwnPersonality(Word personality) {
     }
 #endif
     if (personality == reinterpret_cast<Word>(__gxx_personality_v0_nid_postfix)) return true;
-#if defined(_WIN32) || defined(__linux__)
+#ifdef _WIN32
     if (personality == reinterpret_cast<Word>(__gxx_personality_v0)) return true;
 #endif
     return false;
 }
 struct Lookup { Word pc; const Byte* fde {}; Word text {}; Word data {}; };
-
-#ifdef __linux__
-int FindFrame(dl_phdr_info* info, std::size_t, void* argument) {
-    auto& query = *static_cast<Lookup*>(argument);
-    const Byte* header = nullptr;
-    bool contains = false;
-    for (unsigned i = 0; i < info->dlpi_phnum; ++i) {
-        const auto& ph = info->dlpi_phdr[i];
-        Word start = info->dlpi_addr + ph.p_vaddr;
-        if (ph.p_type == PT_LOAD && query.pc >= start && query.pc - start < ph.p_memsz) contains = true;
-        if (ph.p_type == PT_GNU_EH_FRAME) header = reinterpret_cast<const Byte*>(start);
-        if (ph.p_type == PT_LOAD && (ph.p_flags & PF_X)) query.text = start;
-        if (ph.p_type == PT_LOAD && (ph.p_flags & PF_W)) query.data = start;
-    }
-    if (!contains || !header || header[0] != 1) return 0;
-    const Byte* p = header + 4;
-    Encoded(p, header[1], Word(header));
-    Word count = Encoded(p, header[2]);
-    if (header[3] == 255) return 1;
-    unsigned width = EncodingSize(header[3]);
-    const Byte* table = p;
-    Word lo = 0, hi = count;
-    while (lo < hi) {
-        Word mid = lo + (hi - lo) / 2;
-        p = table + mid * width * 2;
-        Word begin = Encoded(p, header[3], Word(header));
-        if (begin <= query.pc) lo = mid + 1; else hi = mid;
-    }
-    if (lo) {
-        p = table + (lo - 1) * width * 2 + width;
-        query.fde = reinterpret_cast<const Byte*>(Encoded(p, header[3], Word(header)));
-    }
-    return 1;
-}
-
-#endif
 
 struct Frame {
     const Byte* cieBegin {};
@@ -140,10 +103,6 @@ bool DecodeCandidate(_Unwind_Context& context, Frame& frame, const Lookup& query
 
 bool DecodeFrame(_Unwind_Context& context, Frame& frame) {
     Lookup query {context.registers[16] - !context.signalFrame};
-#ifdef __linux__
-    dl_iterate_phdr(FindFrame, &query);
-    return DecodeCandidate(context, frame, query);
-#else
     MEMORY_BASIC_INFORMATION memory{};
     if (!VirtualQuery(reinterpret_cast<void*>(query.pc), &memory, sizeof(memory)) || memory.Type != MEM_IMAGE)
         return false;
@@ -194,7 +153,6 @@ bool DecodeFrame(_Unwind_Context& context, Frame& frame) {
         }
     }
     return false;
-#endif
 }
 
 struct Rule { unsigned kind {}; std::intptr_t value {}; const Byte* expression {}; };
