@@ -1,6 +1,6 @@
 # About
 
-Tool for automatic executables porting to Linux and Windows.
+Tool for automatically porting PS5 executables to Linux and Windows.
 
 Includes a [relinker](core/relinker) that converts executable to the target system's native format and implementations of [system prx libraries](core/libs/prx) suitable for dynamic linking. No emulation or separate runtime process.
 
@@ -18,7 +18,7 @@ Includes a [relinker](core/relinker) that converts executable to the target syst
 
 Dreaming Sarah (2D platformer) runs at a stable 60 fps on a GTX 1050 Ti / i5-7500 3.4GHz.
 
-Unsupported or unexpected states strictly throw `std::runtime_error`. `what()` is printed to stderr and the process terminates.
+Unsupported or unexpected states fail closed by throwing an exception. The relinker reports the error and exits non-zero instead of silently continuing.
 
 The [shader recompiler](core/shader/recompiler/Recompiler.cpp) successfully produces SPIR-V (validated via [Spirv-Tools](3rdparty/SPIRV-Tools) when built with `ANYPS5_ENABLE_SPIRV_TOOLS`).
 
@@ -26,13 +26,34 @@ The [shader recompiler](core/shader/recompiler/Recompiler.cpp) successfully prod
 
 ## Build
 
-The relinker uses only the C++20 standard library and should build with any conforming compiler.
+The relinker uses only the C++20 standard library and should build with a conforming compiler.
+
+### Linux
+
+```
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
+cmake --build build
+ctest --test-dir build --output-on-failure
+```
+
+Enable optional SPIR-V validation with `-DANYPS5_ENABLE_SPIRV_TOOLS=ON`. Enable frame timing logging with `-DANYPS5_ENABLE_TIMING_LOG=ON`.
+
+### Windows
+
+The CI configuration currently builds with MinGW-w64 GCC 15.2.0 (`winlibs-gcc15`, `x86_64-ucrt-posix-seh`). Use the same toolchain when reproducing Windows CI failures.
+
+```
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
+cmake --build build
+ctest --test-dir build --output-on-failure
+```
+
 
 On Intel hosts, pass `--to-intel` to the relinker to lower supported AMD-only instructions in the executable and bundled `sce_module`/`sce_modules` PRX files. Unsupported instructions or stub jumps outside the x86-64 relative branch range produce an error.
 
 [libc.prx](core/libs/prx/libc) implementations contain compiler-specific code. Linux builds work with GCC; on Windows, MinGW-w64 GCC 15.2.0 (`winlibs-gcc15`, `x86_64-ucrt-posix-seh`) is currently required.
 
-The project targets maximum compiler portability (but now it is not implemented).
+The project aims for broad compiler portability; the current CI matrix should be treated as the reference toolchain set.
 
 ## Compatibility
 
