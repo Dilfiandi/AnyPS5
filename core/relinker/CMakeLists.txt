@@ -116,6 +116,12 @@ endif()
 
 
 if(BUILD_TESTING)
+    add_test_executable(cli_args_tests
+        ${CMAKE_CURRENT_SOURCE_DIR}/cli/tests/CliArgsTests.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/cli/src/CliArgs.cpp
+    )
+    target_include_directories(cli_args_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/cli/include)
+    add_test(NAME cli_args COMMAND cli_args_tests)
     add_test_executable(buffer_bounds_tests
         ${CMAKE_CURRENT_SOURCE_DIR}/io/tests/BufferBoundsTests.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/io/src/ByteReader.cpp
