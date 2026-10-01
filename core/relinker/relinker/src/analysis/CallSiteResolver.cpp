@@ -34,10 +34,21 @@ std::size_t ffDispOffset(const std::vector<std::uint8_t>& text, const Codegen::I
     return static_cast<std::size_t>(m.Offset) + instruction.OpcodeOffset() + 2;
 }
 
+bool hasRexW(const std::vector<std::uint8_t>& text, const Codegen::InstructionMatch& m) {
+    const auto instruction = Codegen::DecodedInstruction{text.data() + m.Offset, m.Length};
+    const auto opcodeOffset = instruction.OpcodeOffset();
+    for (std::size_t i = 0; i < opcodeOffset; ++i) {
+        const auto b = text[m.Offset + i];
+        if (b >= RexMin && b <= RexMax)
+            return (b & RexWBit) != 0;
+    }
+    return false;
+}
+
 bool isRipRelativeMov64(const std::vector<std::uint8_t>& text, const Codegen::InstructionMatch& m) {
     const Codegen::DecodedInstruction instruction{text.data() + m.Offset, m.Length};
     const auto opcodeOffset = instruction.OpcodeOffset();
-    if (opcodeOffset >= m.Length || (text[m.Offset + opcodeOffset] < OneByteModRmRangeJMin) ||
+    if (opcodeOffset >= m.Length || text[m.Offset + opcodeOffset] < OneByteModRmRangeJMin ||
         text[m.Offset + opcodeOffset] > OneByteModRmRangeJMax || !hasRexW(text, m))
         return false;
     const auto modrmOffset = opcodeOffset + 1;
@@ -52,17 +63,6 @@ bool isRipRelativeMov64(const std::vector<std::uint8_t>& text, const Codegen::In
 std::size_t mov64DispOffset(const std::vector<std::uint8_t>& text, const Codegen::InstructionMatch& m) {
     const Codegen::DecodedInstruction instruction{text.data() + m.Offset, m.Length};
     return static_cast<std::size_t>(m.Offset) + instruction.OpcodeOffset() + 2;
-}
-
-bool hasRexW(const std::vector<std::uint8_t>& text, const Codegen::InstructionMatch& m) {
-    const auto instruction = Codegen::DecodedInstruction{text.data() + m.Offset, m.Length};
-    const auto opcodeOffset = instruction.OpcodeOffset();
-    for (std::size_t i = 0; i < opcodeOffset; ++i) {
-        const auto b = text[m.Offset + i];
-        if (b >= RexMin && b <= RexMax)
-            return (b & RexWBit) != 0;
-    }
-    return false;
 }
 }
 
