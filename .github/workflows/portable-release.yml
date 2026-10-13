@@ -1,0 +1,133 @@
+name: Windows portable release
+
+on:
+  push:
+    branches: [main]
+    paths: [release/VERSION]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-portable-release
+  cancel-in-progress: false
+
+env:
+  WINLIBS_RELEASE: 15.2.0posix-14.0.0-ucrt-r7
+  WINLIBS_ZIP: winlibs-x86_64-posix-seh-gcc-15.2.0-mingw-w64ucrt-14.0.0-r7.zip
+  SSL_CERT_FILE: 'C:\Program Files\Git\mingw64\etc\ssl\certs\ca-bundle.crt'
+
+jobs:
+  build:
+    name: Build and verify Windows portable package
+    runs-on: windows-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+      sha: ${{ steps.version.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+          persist-credentials: false
+      - name: Read release version and source
+        id: version
+        run: |
+          python -c "import pathlib,re; v=pathlib.Path('release/VERSION').read_text().strip(); assert re.fullmatch(r'v[0-9]+\.[0-9]+\.[0-9]+',v),v"
+          echo "tag=$(tr -d '\r\n' < release/VERSION)" >> "$GITHUB_OUTPUT"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v6
+        id: toolchain
+        with:
+          path: C:\winlibs
+          key: ${{ env.WINLIBS_ZIP }}
+      - name: Install MinGW toolchain
+        if: steps.toolchain.outputs.cache-hit != 'true'
+        run: |
+          curl -sSfL -o "$RUNNER_TEMP/winlibs.zip" "https://github.com/brechtsanders/winlibs_mingw/releases/download/$WINLIBS_RELEASE/$WINLIBS_ZIP"
+          7z x "$RUNNER_TEMP/winlibs.zip" -oC:/winlibs
+      - run: echo 'C:\winlibs\mingw64\bin' >> "$GITHUB_PATH"
+      - uses: hendrikmuhs/ccache-action@v1.2.24
+        with:
+          key: windows
+          save: false
+      - name: Configure and build relinker and GUI tests
+        shell: cmd
+        run: |
+          cmake -S . -B build-tests -G Ninja -DCMAKE_BUILD_TYPE=Release -DANYPS5_RELINKER_ONLY=ON -DBUILD_TESTING=ON -DCMAKE_CXX_COMPILER=g++ -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+          if errorlevel 1 exit /b 1
+          cmake --build build-tests --parallel 3
+      - name: Test relinker, Intel lowering and GUI input validation
+        shell: cmd
+        run: ctest --test-dir build-tests --output-on-failure --timeout 120 --parallel 3 --no-tests=error --output-junit test-results.xml
+      - name: Test portable packaging
+        run: python tools/tests/test_package_portable.py
+      - name: Configure current Windows libraries
+        shell: cmd
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++ -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+      - name: Build current runtime, relinker and GUI
+        shell: cmd
+        run: cmake --build build --target libs relinker anyps5_gui --parallel 3
+      - name: Smoke test packaged relinker
+        shell: cmd
+        run: build\core\relinker\relinker.exe --help
+      - name: Package and verify portable ZIP
+        env:
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+          SOURCE_COMMIT: ${{ steps.version.outputs.sha }}
+        run: python tools/package_portable.py --build build --output dist --version "$RELEASE_TAG" --source-commit "$SOURCE_COMMIT"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: windows-portable-release
+          path: dist/*
+          if-no-files-found: error
+          compression-level: 0
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: portable-test-results
+          path: build-tests/test-results.xml
+          if-no-files-found: ignore
+
+  publish:
+    name: Publish verified portable release
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      RELEASE_TAG: ${{ needs.build.outputs.tag }}
+      SOURCE_COMMIT: ${{ needs.build.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.build.outputs.sha }}
+          persist-credentials: false
+      - uses: actions/download-artifact@v8
+        with:
+          name: windows-portable-release
+          path: dist
+      - name: Verify release assets
+        run: |
+          cd dist
+          sha256sum -c SHA256SUMS.txt
+          test -s "AnyPS5-portable-$RELEASE_TAG.zip"
+          test -s "relinker-$RELEASE_TAG.exe"
+          test -s "prx-windows-$RELEASE_TAG.zip"
+      - name: Create draft, upload and publish
+        run: |
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            echo "Release $RELEASE_TAG already exists; refusing to overwrite it." >&2
+            exit 1
+          fi
+          cp release/NOTES.md /tmp/portable-release-notes.md
+          printf '\nSource commit: `%s`\nBuild and validation: %s/%s/actions/runs/%s\n' "$SOURCE_COMMIT" "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" >> /tmp/portable-release-notes.md
+          gh release create "$RELEASE_TAG" dist/* --target "$SOURCE_COMMIT" --draft --title "AnyPS5 $RELEASE_TAG - Windows Portable" --notes-file /tmp/portable-release-notes.md
+          gh release edit "$RELEASE_TAG" --draft=false --latest

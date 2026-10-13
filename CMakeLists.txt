@@ -105,6 +105,10 @@ if(BUILD_TESTING)
     endif()
 endif()
 
+if(WIN32)
+    add_subdirectory(core/gui)
+endif()
+
 if(ANYPS5_RELINKER_ONLY)
     add_subdirectory(core/relinker)
     return()

@@ -1,5 +1,6 @@
 #include <relinker/analysis/CallSiteResolver.hpp>
 #include <codegen/IInstructionScanner.hpp>
+#include <codegen/x86/DecodedInstruction.hpp>
 #include <codegen/x86/X64OpcodeConstants.hpp>
 #include <cstring>
 #include <limits>
@@ -18,52 +19,40 @@ std::int32_t readDisp32(const std::vector<std::uint8_t>& text, std::size_t offse
     return static_cast<std::int32_t>(v);
 }
 
+std::size_t opcodeOffset(const std::vector<std::uint8_t>& text, const Codegen::InstructionMatch& m) {
+    return Codegen::DecodedInstruction{text.data() + m.Offset, m.Length}.OpcodeOffset();
+}
+
+bool hasAddressOverride(const std::vector<std::uint8_t>& text, const Codegen::InstructionMatch& m, std::size_t opcode) {
+    return std::find(text.begin() + m.Offset, text.begin() + m.Offset + opcode, PrefixAddressSize) != text.begin() + m.Offset + opcode;
+}
+
 bool isRipRelativeFF(const std::vector<std::uint8_t>& text, const Codegen::InstructionMatch& m) {
-    std::size_t cur = static_cast<std::size_t>(m.Offset);
-    std::size_t end = cur + m.Length;
-    while (cur < end) {
-        std::uint8_t b = text[cur];
-        if (b >= RexMin && b <= RexMax) { ++cur; continue; }
-        if (b == OneByteGrp5Rm && cur + 2 <= end) {
-            std::uint8_t modrm = text[cur + 1];
-            std::uint8_t mod = (modrm >> ModRmModShift) & ModRmModMask;
-            std::uint8_t rm = modrm & ModRmRmMask;
-            const auto operation = (modrm >> ModRmRegShift) & ModRmRegMask;
-            return mod == ModRmModIndirect && rm == ModRmRmRipRelative && (operation >= 2 && operation <= 6);
-        }
-        break;
-    }
-    return false;
+    const auto opcode = opcodeOffset(text, m);
+    if (opcode + 6 > m.Length || hasAddressOverride(text, m, opcode) || text[m.Offset + opcode] != OneByteGrp5Rm)
+        return false;
+    const auto modrm = text[m.Offset + opcode + 1];
+    const auto operation = (modrm >> ModRmRegShift) & ModRmRegMask;
+    return (modrm >> ModRmModShift) == ModRmModIndirect && (modrm & ModRmRmMask) == ModRmRmRipRelative && operation >= 2 && operation <= 6;
 }
 
 std::size_t ffDispOffset(const std::vector<std::uint8_t>& text, const Codegen::InstructionMatch& m) {
-    std::size_t cur = static_cast<std::size_t>(m.Offset);
-    while (text[cur] >= RexMin && text[cur] <= RexMax) ++cur;
-    return cur + 2;
+    return static_cast<std::size_t>(m.Offset) + opcodeOffset(text, m) + 2;
 }
 
 bool isRipRelativeMov64(const std::vector<std::uint8_t>& text, const Codegen::InstructionMatch& m) {
-    std::size_t cur = static_cast<std::size_t>(m.Offset);
-    std::size_t end = cur + m.Length;
-    bool hasRexW = false;
-    while (cur < end) {
-        std::uint8_t b = text[cur];
-        if (b >= RexMin && b <= RexMax) { if (b & RexWBit) hasRexW = true; ++cur; continue; }
-        if (hasRexW && b == OneByteModRmRangeJMax && cur + 2 <= end) {
-            std::uint8_t modrm = text[cur + 1];
-            std::uint8_t mod = (modrm >> ModRmModShift) & ModRmModMask;
-            std::uint8_t rm = modrm & ModRmRmMask;
-            return mod == ModRmModIndirect && rm == ModRmRmRipRelative;
-        }
-        break;
-    }
-    return false;
+    const auto opcode = opcodeOffset(text, m);
+    if (opcode + 6 > m.Length || opcode == 0 || hasAddressOverride(text, m, opcode) || text[m.Offset + opcode] != OneByteModRmRangeJMax)
+        return false;
+    const auto rex = text[m.Offset + opcode - 1];
+    if (rex < RexMin || rex > RexMax || !(rex & RexWBit))
+        return false;
+    const auto modrm = text[m.Offset + opcode + 1];
+    return (modrm >> ModRmModShift) == ModRmModIndirect && (modrm & ModRmRmMask) == ModRmRmRipRelative;
 }
 
 std::size_t mov64DispOffset(const std::vector<std::uint8_t>& text, const Codegen::InstructionMatch& m) {
-    std::size_t cur = static_cast<std::size_t>(m.Offset);
-    while (text[cur] >= RexMin && text[cur] <= RexMax) ++cur;
-    return cur + 2;
+    return static_cast<std::size_t>(m.Offset) + opcodeOffset(text, m) + 2;
 }
 }
 
