@@ -3,7 +3,7 @@ name: Windows portable release
 on:
   push:
     branches: [main]
-    paths: [release/VERSION]
+    paths: [release/VERSION, release/TRIGGER]
   workflow_dispatch:
 
 permissions:
@@ -72,6 +72,12 @@ jobs:
       - name: Build current runtime, relinker and GUI
         shell: cmd
         run: cmake --build build --target libs relinker anyps5_gui --parallel 3
+      - name: Test that every patched library loads on Windows
+        shell: cmd
+        run: |
+          g++ -std=c++20 -O2 -static -static-libgcc -static-libstdc++ core\libs\tests\PatchedLibraries.cpp -o build\patched-libraries-check.exe
+          if errorlevel 1 exit /b 1
+          build\patched-libraries-check.exe %CD%\build\core\libs\libs
       - name: Smoke test packaged relinker
         shell: cmd
         run: build\core\relinker\relinker.exe --help
@@ -127,7 +133,7 @@ jobs:
             echo "Release $RELEASE_TAG already exists; refusing to overwrite it." >&2
             exit 1
           fi
-          cp release/NOTES.md /tmp/portable-release-notes.md
+          cp .github/release-notes.md /tmp/portable-release-notes.md
           printf '\nSource commit: `%s`\nBuild and validation: %s/%s/actions/runs/%s\n' "$SOURCE_COMMIT" "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" >> /tmp/portable-release-notes.md
           gh release create "$RELEASE_TAG" dist/* --target "$SOURCE_COMMIT" --draft --title "AnyPS5 $RELEASE_TAG - Windows Portable" --notes-file /tmp/portable-release-notes.md
           gh release edit "$RELEASE_TAG" --draft=false --latest

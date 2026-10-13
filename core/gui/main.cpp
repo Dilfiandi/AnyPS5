@@ -340,8 +340,10 @@ DWORD WINAPI ProcessWorker(void* raw) {
 }
 
 void StartConversion() {
-    const std::wstring input = GetText(gInput);
-    const std::wstring output = GetText(gOutput);
+    const auto selectedInput = GetText(gInput);
+    const std::wstring input = selectedInput.empty() ? selectedInput : std::filesystem::absolute(selectedInput).wstring();
+    const auto selectedOutput = GetText(gOutput);
+    const std::wstring output = selectedOutput.empty() ? selectedOutput : std::filesystem::absolute(selectedOutput).wstring();
 
     const InputFileState inputState = InspectInputFile(input);
     if (ShowInputPreflightError(inputState)) {
